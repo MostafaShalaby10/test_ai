@@ -1,0 +1,87 @@
+{
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Entrance",
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "type": "store"
+    },
+    {
+      "id": "2",
+      "name": "stairs",
+      "x": 100,
+      "y": 200,
+      "z": 0,
+      "type": "stairs"
+    },
+    {
+      "id": "3",
+      "name": "stairs",
+      "x": 100,
+      "y": 200,
+      "z": 1,
+      "type": "stairs"
+    }
+  ,
+    {
+      "id": "4",
+      "name": "Zara",
+      "x": 50,
+      "y": 300,
+      "z": 0,
+      "type": "store"
+    },
+    {
+      "id": "5",
+      "name": "Nike",
+      "x": 250,
+      "y": 100,
+      "z": 0,
+      "type": "store"
+    }
+  ,
+    {
+      "id": "6",
+      "name": "adidas",
+      "x": 50,
+      "y": 300,
+      "z": 1,
+      "type": "store"
+    },
+    {
+      "id": "7",
+      "name": "resturant",
+      "x": 250,
+      "y": 100,
+      "z": 1,
+      "type": "store"
+    }
+  ],
+  "edges": [
+    {
+      "from": "1",
+      "to": "2"
+    },
+    {
+      "from": "2",
+      "to": "3"
+    },
+    {
+      "from": "1",
+      "to": "4"
+    },
+    {
+      "from": "4",
+      "to": "5"
+    },
+    {
+      "from": "3",
+      "to": "6"
+    },{
+      "from": "3",
+      "to": "7"
+    }
+  ]
+}
