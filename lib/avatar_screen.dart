@@ -69,7 +69,7 @@ class _UniversalAvatarScreenState extends State<UniversalAvatarScreen> {
         
         // Auto-align once sensors are stable
         if (!_isAligned) {
-          _session.initializeDefaultAlignment(Vector3(0, 0, 0));
+          // _session.initializeDefaultAlignment(Vector3(0, 0, 0));
           _isAligned = true;
           _status = "Scan a QR Code or Select Destination";
         }

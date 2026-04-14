@@ -243,6 +243,50 @@ class NavGraph {
     }
     return nearestId;
   }
+
+  /// Finds the closest point on ANY edge in the graph.
+  /// This is used for "Edge Snapping" to keep the user locked to corridors.
+  Vector3 findNearestPointOnGraph(Vector3 position) {
+    Vector3? bestPoint;
+    double minDistance = double.infinity;
+
+    for (final nodeId in adjacency.keys) {
+      final from = nodes[nodeId]!.position;
+      for (final neighbor in adjacency[nodeId]!!) {
+        final to = nodes[neighbor.neighborId]!.position;
+
+        // Find the closest point on the line segment (from, to).
+        final pointOnEdge = _closestPointOnSegment(position, from, to);
+        final dist = position.distanceTo(pointOnEdge);
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          bestPoint = pointOnEdge;
+        }
+      }
+    }
+
+    return bestPoint ?? position;
+  }
+
+  Vector3 _closestPointOnSegment(Vector3 p, Vector3 a, Vector3 b) {
+    final ap = p - a;
+    final ab = b - a;
+
+    // Project ap onto ab using dot product.
+    final abLenSq = pow(ab.x, 2) + pow(ab.y, 2) + pow(ab.z, 2);
+    if (abLenSq == 0) return a;
+
+    // t is the projection factor, clamped to [0, 1].
+    double t = (ap.x * ab.x + ap.y * ab.y + ap.z * ab.z) / abLenSq;
+    t = max(0, min(1, t));
+
+    return Vector3(
+      a.x + t * ab.x,
+      a.y + t * ab.y,
+      a.z + t * ab.z,
+    );
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -289,29 +333,17 @@ class CoordinateAligner {
     double? arCameraYaw,
     double? knownMapYaw,
   }) {
-    forceAlignment(
-      knownMapPosition: knownMapPosition,
-      arPosition: arDetectedPosition,
-      mapYaw: knownMapYaw,
-      arYaw: arCameraYaw,
-    );
-  }
+    // Calculate the translation offset.
+    // offset = where AR thinks we are - where the map says we are.
+    _offset = arDetectedPosition - knownMapPosition;
 
-  /// Manually set the alignment between coordinate systems.
-  ///
-  /// [knownMapPosition] — where you are on the map.
-  /// [arPosition] — where ARCore says you are in its world.
-  void forceAlignment({
-    required Vector3 knownMapPosition,
-    required Vector3 arPosition,
-    double? mapYaw,
-    double? arYaw,
-  }) {
-    _offset = arPosition - knownMapPosition;
-    if (mapYaw != null && arYaw != null) {
-      _yawOffset = arYaw - mapYaw;
+    // If rotation info is provided, calculate yaw offset too.
+    // This handles the case where the user isn't facing "map north" when they scan.
+    if (arCameraYaw != null && knownMapYaw != null) {
+      _yawOffset = arCameraYaw - knownMapYaw;
     }
-    print('[Aligner] Forced Alignment! Offset: $_offset, Yaw offset: $_yawOffset rad');
+
+    print('[Aligner] Aligned! Offset: $_offset, Yaw offset: $_yawOffset rad');
   }
 
   /// Converts an AR position (from ARCore) to a map position (your mall JSON).
@@ -588,27 +620,13 @@ class NavigationSession {
 
     // Align the coordinate systems using the known map position
     // and the AR camera position where we detected the QR.
-    aligner.forceAlignment(
+    aligner.alignFromQRCode(
       knownMapPosition: mapPosition,
-      arPosition: arCameraPosition,
+      arDetectedPosition: arCameraPosition,
     );
 
     print('[Session] Aligned via QR "$qrValue" at map position $mapPosition');
     return true;
-  }
-
-  /// Initializes the session at a default map position (typically origin 0,0,0).
-  /// Call this if you want to skip QR scanning.
-  void initializeDefaultAlignment(Vector3 arCameraPosition) {
-    // We assume the user is standing at (0, 0, 0) on the map.
-    final defaultMapPos = Vector3(0, 0, 0);
-
-    aligner.forceAlignment(
-      knownMapPosition: defaultMapPos,
-      arPosition: arCameraPosition,
-    );
-
-    print('[Session] Initialized with default alignment at $defaultMapPos');
   }
 
   // ──────────────────────────────────────────

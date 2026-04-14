@@ -44,6 +44,7 @@ dependencies:
   model_viewer_plus: ^1.10.0
   vector_math: ^2.1.4
   camera: ^0.10.5+5
+  sensors_plus: ^4.0.0      # Accelerometer for step counting
 
 dependency_overrides:
   permission_handler: ^11.0.0

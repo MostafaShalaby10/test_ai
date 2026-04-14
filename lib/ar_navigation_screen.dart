@@ -37,7 +37,6 @@ import 'package:flutter/material.dart';
 
 // ── AR Plugin ──
 
-
 // ── Vector math ──
 import 'package:vector_math/vector_math_64.dart' as vm;
 
