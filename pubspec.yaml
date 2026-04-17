@@ -1,0 +1,36 @@
+name: test_sensors
+description: "A new Flutter project."
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Tier 1: Full AR (ARCore/ARKit) ──
+  ar_flutter_plugin_2: ^0.0.3
+  vector_math: ^2.1.4
+
+  # ── Tier 2: Sensor AR + MindAR (Camera + PDR + Image Tracking) ──
+  camera: ^0.10.5+9         # Raw camera feed (no AR)
+  sensors_plus: ^4.0.0      # Accelerometer for step counting
+  flutter_compass: ^0.8.0   # Compass heading from magnetometer
+  webview_flutter: ^4.4.0   # WebView for running MindAR image tracking
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - lib/mindar_tracker.html
+
+dependency_overrides:
+  permission_handler: ^11.3.1
+  geolocator: ^10.1.0
