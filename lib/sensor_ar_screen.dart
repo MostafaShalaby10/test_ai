@@ -6,6 +6,7 @@ import 'ar_navigation_system.dart';
 import 'pdr_tracker.dart';
 import 'mindar_detector.dart';
 import 'image_marker_registry.dart';
+import 'map_2d_screen.dart';
 
 class SensorARScreen extends StatefulWidget {
   final Map<String, dynamic> mallJson;
@@ -40,6 +41,7 @@ class _SensorARScreenState extends State<SensorARScreen> {
   String _markerStatus = 'Scanning...';
   int _corrections = 0;
   final double _arrTh = 1.5;
+  bool _isMapExpanded = false;
 
   @override
   void initState() {
@@ -177,6 +179,7 @@ class _SensorARScreenState extends State<SensorARScreen> {
       MindARDetector(mindFileUrl: widget.mindFileUrl, registry: _markerReg, maxTrack: _markerReg.count.clamp(1, 5), onMarkerDetected: _onMarkerDetected, onMarkerLost: _onMarkerLost, showDebug: true, onError: (e) => log('MindAR error: $e', name: 'SENSOR')),
       if (_isNav) _buildArrow(),
       _buildStatus(),
+      _buildMiniMap(),
       _buildDebug(),
       if (!_isNav && !_arrived) _buildPicker(),
       if (_isNav) _buildNavInfo(),
@@ -258,4 +261,45 @@ class _SensorARScreenState extends State<SensorARScreen> {
       const SizedBox(height: 24),
       ElevatedButton(onPressed: () => setState(() => _arrived = false), child: const Text('Navigate Somewhere Else')),
     ])))));
+
+  Widget _buildMiniMap() {
+    final width = _isMapExpanded ? MediaQuery.of(context).size.width - 32 : 120.0;
+    final height = _isMapExpanded ? MediaQuery.of(context).size.height * 0.4 : 160.0;
+    final topRads = widget.initialFacingRadians + (_compassHead - _pdr.initialHeading) * math.pi / 180.0;
+
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 65,
+      right: 16,
+      child: GestureDetector(
+        onTap: () => setState(() => _isMapExpanded = !_isMapExpanded),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.9),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.blueAccent, width: 2),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: CustomPaint(
+              painter: MapPainter(
+                graph: _graph,
+                path: _path,
+                currentWaypointIndex: _wpIdx,
+                userPosition: _pdr.currentPosition,
+                userHeading: topRads,
+                userDotRadius: _isMapExpanded ? 8 : 4,
+                scaleFactor: 1.0,
+                padding: _isMapExpanded ? null : 15.0,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

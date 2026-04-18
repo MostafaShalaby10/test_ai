@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'dart:async';
 import 'dart:developer';
+import 'dart:io' show Platform;
 
 enum NavigationTier { fullAR, sensorAR, map2D }
 
@@ -35,11 +36,13 @@ class DeviceCapabilityChecker {
   }
 
   static Future<bool> _checkGyroscope() async {
+    if (!Platform.isAndroid && !Platform.isIOS) return false;
     try {
       final c = Completer<bool>();
       final sub = gyroscopeEventStream().listen(
         (e) { if (!c.isCompleted) c.complete(true); },
         onError: (e) { if (!c.isCompleted) c.complete(false); },
+        cancelOnError: true,
       );
       final r = await c.future.timeout(const Duration(seconds: 1), onTimeout: () => false);
       await sub.cancel();
@@ -48,14 +51,16 @@ class DeviceCapabilityChecker {
   }
 
   static Future<bool> _checkMagnetometer() async {
+    if (!Platform.isAndroid && !Platform.isIOS) return false;
     try {
       final c = Completer<bool>();
       final sub = magnetometerEventStream().listen(
         (e) { if (!c.isCompleted) c.complete(true); },
         onError: (e) { if (!c.isCompleted) c.complete(false); },
+        cancelOnError: true,
       );
       final r = await c.future.timeout(const Duration(seconds: 1), onTimeout: () => false);
-      await sub.cancel();
+      try { await sub.cancel(); } catch (e) { /* ignore cancel errors */ }
       return r;
     } catch (e) { log('Magnetometer check error: $e', name: 'CAP'); return false; }
   }

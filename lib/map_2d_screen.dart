@@ -63,7 +63,7 @@ class _Map2DScreenState extends State<Map2DScreen> with SingleTickerProviderStat
         if (_isNav) TextButton(onPressed: () => setState(() { _isNav = false; _path = null; }), child: const Text('Cancel', style: TextStyle(color: Colors.white)))]),
       body: Column(children: [
         Container(width: double.infinity, padding: const EdgeInsets.all(8), color: Colors.orange[50], child: const Text('📍 2D Map Mode', textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: Colors.orange))),
-        Expanded(flex: 3, child: AnimatedBuilder(animation: _pulseAnim, builder: (c, _) => CustomPaint(painter: _MapPainter(graph: _graph, path: _path, currentWaypointIndex: _wpIdx, userDotRadius: _pulseAnim.value), size: Size.infinite))),
+        Expanded(flex: 3, child: AnimatedBuilder(animation: _pulseAnim, builder: (c, _) => CustomPaint(painter: MapPainter(graph: _graph, path: _path, currentWaypointIndex: _wpIdx, userDotRadius: _pulseAnim.value), size: Size.infinite))),
         if (!_isNav && !_arrived) _buildPicker(),
         if (_isNav) _buildDirs(),
         if (_arrived) _buildArrival(),
@@ -110,20 +110,51 @@ class _Map2DScreenState extends State<Map2DScreen> with SingleTickerProviderStat
   ]));
 }
 
-class _MapPainter extends CustomPainter {
+class MapPainter extends CustomPainter {
   final NavGraph graph;
   final List<NavNode>? path;
   final int currentWaypointIndex;
   final double userDotRadius;
-  _MapPainter({required this.graph, this.path, this.currentWaypointIndex = 0, this.userDotRadius = 10});
+  final Vector3? userPosition;
+  final double? userHeading;
+  final double? padding;
+  final double scaleFactor;
+
+  MapPainter({
+    required this.graph,
+    this.path,
+    this.currentWaypointIndex = 0,
+    this.userDotRadius = 10,
+    this.userPosition,
+    this.userHeading,
+    this.padding,
+    this.scaleFactor = 1.0,
+  });
 
   @override
   void paint(Canvas c, Size size) {
     double mnX = double.infinity, mxX = double.negativeInfinity, mnZ = double.infinity, mxZ = double.negativeInfinity;
     for (final n in graph.nodes.values) { mnX = math.min(mnX, n.position.x); mxX = math.max(mxX, n.position.x); mnZ = math.min(mnZ, n.position.z); mxZ = math.max(mxZ, n.position.z); }
-    final pad = 40.0, mw = mxX - mnX, mh = mxZ - mnZ;
-    final sc = math.min((size.width - pad * 2) / (mw == 0 ? 1 : mw), (size.height - pad * 2) / (mh == 0 ? 1 : mh));
-    final ox = (size.width - mw * sc) / 2, oz = (size.height - mh * sc) / 2;
+    final pad = padding ?? math.min(size.width, size.height) * 0.1;
+    final mw = mxX - mnX, mh = mxZ - mnZ;
+    final baseSc = math.min((size.width - pad * 2) / (mw == 0 ? 1 : mw), (size.height - pad * 2) / (mh == 0 ? 1 : mh));
+    final sc = baseSc * scaleFactor;
+    
+    final mapPixelW = mw * sc;
+    final mapPixelH = mh * sc;
+    
+    double ox = (size.width - mapPixelW) / 2;
+    double oz = (size.height - mapPixelH) / 2;
+
+    if (userPosition != null && scaleFactor >= 1.0) {
+       final relX = mw == 0 ? 0.5 : (userPosition!.x - mnX) / mw;
+       final relZ = mh == 0 ? 0.5 : (userPosition!.z - mnZ) / mh;
+       final userPxlX = relX * mapPixelW;
+       final userPxlZ = relZ * mapPixelH;
+       ox = (size.width / 2) - userPxlX;
+       oz = (size.height / 2) - userPxlZ;
+    }
+    
     Offset ts(Vector3 p) => Offset(ox + (p.x - mnX) * sc, oz + (p.z - mnZ) * sc);
 
     final ep = Paint()..color = Colors.grey[300]!..strokeWidth = 2..style = PaintingStyle.stroke;
@@ -140,19 +171,53 @@ class _MapPainter extends CustomPainter {
     }
 
     for (final n in graph.nodes.values) {
-      final p = ts(n.position); final isS = n.shopName != null;
+      final p = ts(n.position);
+      final isS = n.shopName != null;
       c.drawCircle(p, isS ? 6 : 3, Paint()..color = isS ? Colors.blue[700]! : Colors.grey[400]!);
-      if (isS) { final tp = TextPainter(text: TextSpan(text: n.shopName, style: TextStyle(fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout(); tp.paint(c, Offset(p.dx - tp.width / 2, p.dy + 8)); }
+      
+      final label = n.shopName ?? n.id;
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label, 
+          style: TextStyle(
+            fontSize: isS ? 11 : 9, 
+            color: isS ? Colors.blue[900] : Colors.black87, 
+            fontWeight: isS ? FontWeight.bold : FontWeight.normal
+          )
+        ), 
+        textDirection: TextDirection.ltr
+      )..layout();
+      tp.paint(c, Offset(p.dx - tp.width / 2, p.dy + (isS ? 8 : 4)));
     }
 
-    if (path != null && currentWaypointIndex < path!.length) {
-      final up = ts(path![currentWaypointIndex].position);
+    Vector3? drawPos;
+    if (userPosition != null) {
+      drawPos = userPosition;
+    } else if (path != null && currentWaypointIndex < path!.length) {
+      drawPos = path![currentWaypointIndex].position;
+    }
+
+    if (drawPos != null) {
+      final up = ts(drawPos);
       c.drawCircle(up, userDotRadius + 4, Paint()..color = Colors.blue.withOpacity(0.3));
+      
+      if (userHeading != null) {
+        final headingPaint = Paint()
+          ..color = Colors.blue.withOpacity(0.8)
+          ..strokeWidth = 4
+          ..strokeCap = StrokeCap.round
+          ..style = PaintingStyle.stroke;
+        final dx = math.cos(userHeading!);
+        final dz = math.sin(userHeading!);
+        final length = userDotRadius + 12;
+        c.drawLine(up, Offset(up.dx + dx * length, up.dy + dz * length), headingPaint);
+      }
+      
       c.drawCircle(up, 8, Paint()..color = Colors.blue);
       c.drawCircle(up, 4, Paint()..color = Colors.white);
     }
   }
 
   @override
-  bool shouldRepaint(covariant _MapPainter o) => o.currentWaypointIndex != currentWaypointIndex || o.userDotRadius != userDotRadius || o.path != path;
+  bool shouldRepaint(covariant MapPainter o) => o.currentWaypointIndex != currentWaypointIndex || o.userDotRadius != userDotRadius || o.path != path || o.userPosition != userPosition || o.userHeading != userHeading;
 }

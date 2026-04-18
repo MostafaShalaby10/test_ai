@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math'as math;
 import 'dart:developer';
+import 'dart:io' show Platform;
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'ar_navigation_system.dart';
@@ -42,16 +43,15 @@ class PDRTracker {
   bool _isWalkingLocked = false;
 
   // ── Direction detection ──
+  // UserAccelerometerEvent is gravity-free (OS already subtracts it).
+  // We accumulate e.z (forward/back along phone body) and e.x (lateral) directly.
+  // Net sign of the Z integral over a step cycle tells us forward vs backward.
   double _netForwardAccel = 0.0;
   double _netLateralAccel = 0.0;
   int _forwardSampleCount = 0;
 
-  // ── Gravity ──
-  double _gravityX = 0, _gravityY = -9.8, _gravityZ = 0;
-
   // ── Subscriptions ──
   StreamSubscription? _accelSub;
-  StreamSubscription? _gravitySub;
   StreamSubscription? _compassSub;
 
   // ── Callbacks ──
@@ -63,7 +63,10 @@ class PDRTracker {
   PDRTracker({
     required Vector3 startPosition,
     this.stepLength = 0.65,
-    this.minStepInterval = const Duration(milliseconds: 350),
+    // FIX: lowered from 350ms → 200ms. Logs showed real walking cycles of
+    // 100–320ms being rejected; 200ms keeps noise protection while accepting
+    // faster natural cadences.
+    this.minStepInterval = const Duration(milliseconds: 200),
     this.maxStepDuration = const Duration(milliseconds: 2000),
     this.peakThreshold = 1.2,
     this.valleyRatio = 0.7,
@@ -90,31 +93,38 @@ class PDRTracker {
     _isWalkingLocked = false;
     _recentStepIntervals.clear();
 
-    _accelSub = userAccelerometerEventStream(
-      samplingPeriod: const Duration(milliseconds: 20),
-    ).listen(_onAccelData);
+    if (Platform.isAndroid || Platform.isIOS) {
+      try {
+        _accelSub = userAccelerometerEventStream(
+          samplingPeriod: const Duration(milliseconds: 20),
+        ).listen(
+          _onAccelData,
+          onError: (e) => log('Accel stream error: $e', name: 'PDR'),
+          cancelOnError: true,
+        );
+      } catch (e) { log('Accel init error: $e', name: 'PDR'); }
 
-    _gravitySub = accelerometerEventStream(
-      samplingPeriod: const Duration(milliseconds: 100),
-    ).listen(_onGravityData);
+      try {
+        _compassSub = FlutterCompass.events?.listen(
+          _onCompassData,
+          onError: (e) => log('Compass stream error: $e', name: 'PDR'),
+          cancelOnError: true,
+        );
+      } catch (e) { log('Compass init error: $e', name: 'PDR'); }
+    } else {
+      log('Desktop/Web detected. Hardware sensors disabled.', name: 'PDR');
+    }
 
-    _compassSub = FlutterCompass.events?.listen(_onCompassData);
-
-    log('Started. pos=$_currentPosition stepLen=$stepLength peakTh=$peakThreshold valleyR=$valleyRatio minConsec=$minConsecutiveSteps', name: 'PDR');
+    log('Started. pos=$_currentPosition stepLen=$stepLength peakTh=$peakThreshold '
+        'valleyR=$valleyRatio minConsec=$minConsecutiveSteps '
+        'minInterval=${minStepInterval.inMilliseconds}ms', name: 'PDR');
   }
 
   void stop() {
-    _accelSub?.cancel(); _gravitySub?.cancel(); _compassSub?.cancel();
-    _accelSub = null; _gravitySub = null; _compassSub = null;
+    try { _accelSub?.cancel(); } catch (e) { log('Accel cancel error: $e', name: 'PDR'); }
+    try { _compassSub?.cancel(); } catch (e) { log('Compass cancel error: $e', name: 'PDR'); }
+    _accelSub = null; _compassSub = null;
     log('Stopped. totalSteps=$_totalSteps finalPos=$_currentPosition', name: 'PDR');
-  }
-
-  // ═══════════════════════════════════════════════
-  // GRAVITY
-  // ═══════════════════════════════════════════════
-
-  void _onGravityData(AccelerometerEvent e) {
-    _gravityX = e.x; _gravityY = e.y; _gravityZ = e.z;
   }
 
   // ═══════════════════════════════════════════════
@@ -130,10 +140,10 @@ class PDRTracker {
 
     final smoothed = _accelBuffer.reduce((a, b) => a + b) / _accelBuffer.length;
 
-    // Accumulate direction data during step cycle
+    // Accumulate raw axis data for direction detection during the step cycle.
     if (_phase != _StepPhase.idle) {
-      _netForwardAccel += _getForwardAccel(event);
-      _netLateralAccel += _getLateralAccel(event);
+      _netForwardAccel += event.z; // gravity-free; +z = forward when phone upright
+      _netLateralAccel += event.x; // gravity-free; +x = right
       _forwardSampleCount++;
     }
 
@@ -186,9 +196,10 @@ class PDRTracker {
     }
 
     onDebugUpdate?.call(
-      'Phase:${_phase.name} Sm:${smoothed.toStringAsFixed(2)} Pk:${_peakValue.toStringAsFixed(2)} Vl:${_valleyValue == double.infinity ? "∞" : _valleyValue.toStringAsFixed(2)}\n'
+      'Phase:${_phase.name} Sm:${smoothed.toStringAsFixed(2)} Pk:${_peakValue.toStringAsFixed(2)} '
+      'Vl:${_valleyValue == double.infinity ? "∞" : _valleyValue.toStringAsFixed(2)}\n'
       'Walk:${_isWalkingLocked ? "LOCKED" : "no(${_consecutiveValidSteps}/$minConsecutiveSteps)"} '
-      'Dir:${_netForwardAccel >= 0 ? "FWD" : "BWD"}',
+      'Dir:${_forwardSampleCount > 0 ? (_netForwardAccel / _forwardSampleCount >= 0 ? "FWD" : "BWD") : "?"}',
     );
   }
 
@@ -236,7 +247,9 @@ class PDRTracker {
     _recentStepIntervals.add(sinceLast);
     if (_recentStepIntervals.length > _rhythmWindowSize) _recentStepIntervals.removeAt(0);
 
-    log('✓ Valid cycle #$_consecutiveValidSteps: peak=${_peakValue.toStringAsFixed(2)} valley=${_valleyValue.toStringAsFixed(2)} dur=${cycleDur.inMilliseconds}ms sinceLast=${sinceLast.inMilliseconds}ms', name: 'PDR.VALID');
+    log('✓ Valid cycle #$_consecutiveValidSteps: peak=${_peakValue.toStringAsFixed(2)} '
+        'valley=${_valleyValue.toStringAsFixed(2)} dur=${cycleDur.inMilliseconds}ms '
+        'sinceLast=${sinceLast.inMilliseconds}ms', name: 'PDR.VALID');
 
     // Check 5: Lock
     if (_consecutiveValidSteps >= minConsecutiveSteps) {
@@ -255,7 +268,9 @@ class PDRTracker {
     final oldPos = _currentPosition;
     _currentPosition = _computeNewPosition(dir);
 
-    log('STEP #$_totalSteps: dir=${dir.toStringAsFixed(2)} heading=${_heading.toStringAsFixed(1)}° mapHead=${(_mapHeadingRadians * 180 / math.pi).toStringAsFixed(1)}° pos $oldPos → $_currentPosition', name: 'PDR');
+    log('STEP #$_totalSteps: dir=${dir.toStringAsFixed(2)} heading=${_heading.toStringAsFixed(1)}° '
+        'mapHead=${(_mapHeadingRadians * 180 / math.pi).toStringAsFixed(1)}° '
+        'pos $oldPos → $_currentPosition', name: 'PDR');
 
     onStepDetected?.call(_totalSteps);
     onPositionUpdate?.call(_currentPosition);
@@ -268,29 +283,40 @@ class PDRTracker {
   // ═══════════════════════════════════════════════
   // DIRECTION DETECTION
   // ═══════════════════════════════════════════════
-
-  double _getForwardAccel(UserAccelerometerEvent e) {
-    final gm = math.sqrt(_gravityX * _gravityX + _gravityY * _gravityY + _gravityZ * _gravityZ);
-    if (gm < 0.1) return e.z;
-    final gx = _gravityX/gm, gy = _gravityY/gm, gz = _gravityZ/gm;
-    return e.z - (e.x*gx + e.y*gy + e.z*gz) * gz;
-  }
-
-  double _getLateralAccel(UserAccelerometerEvent e) {
-    final gm = math.sqrt(_gravityX * _gravityX + _gravityY * _gravityY + _gravityZ * _gravityZ);
-    if (gm < 0.1) return e.x;
-    final gx = _gravityX/gm, gy = _gravityY/gm, gz = _gravityZ/gm;
-    return e.x - (e.x*gx + e.y*gy + e.z*gz) * gx;
-  }
+  //
+  // FIX: The old code projected a gravity-free UserAccelerometerEvent onto a
+  // gravity unit vector from a separate accelerometerEventStream. This was
+  // mathematically wrong — projecting a gravity-free vector onto a gravity
+  // axis produces noise, not a meaningful forward component.
+  //
+  // Correct approach: UserAccelerometerEvent already has gravity removed by
+  // the OS sensor fusion. For a phone held upright in-hand while walking:
+  //   • e.z  ≈ forward/backward (+z = forward, screen facing user)
+  //   • e.x  ≈ lateral (left/right)
+  //
+  // We average signed e.z over the cycle. Negative average → backward.
+  // If |lateral| >> |forward| → side-step (half step length).
+  // Default: FORWARD (overwhelmingly most common during navigation).
 
   double _computeDirection() {
-    if (_forwardSampleCount == 0) { log('No direction samples, defaulting to FORWARD', name: 'PDR.DIR'); return 1.0; }
+    if (_forwardSampleCount == 0) {
+      log('No direction samples, defaulting to FORWARD', name: 'PDR.DIR');
+      return 1.0;
+    }
     final avgFwd = _netForwardAccel / _forwardSampleCount;
     final avgLat = _netLateralAccel / _forwardSampleCount;
-    log('avgForward=${avgFwd.toStringAsFixed(3)} avgLateral=${avgLat.toStringAsFixed(3)} samples=$_forwardSampleCount', name: 'PDR.DIR');
+    log('avgZ(fwd)=${avgFwd.toStringAsFixed(3)} avgX(lat)=${avgLat.toStringAsFixed(3)} samples=$_forwardSampleCount', name: 'PDR.DIR');
 
-    if (avgLat.abs() > avgFwd.abs() * 1.5) { log('→ LATERAL movement (half step)', name: 'PDR.DIR'); return 0.5; }
-    if (avgFwd < -0.3) { log('→ BACKWARD', name: 'PDR.DIR'); return -1.0; }
+    // Clear lateral dominance → side-step
+    if (avgLat.abs() > avgFwd.abs() * 2.0) {
+      log('→ LATERAL movement (half step)', name: 'PDR.DIR');
+      return 0.5;
+    }
+    // Backward: needs stronger threshold (−0.5) to avoid noise misfires
+    if (avgFwd < -0.5) {
+      log('→ BACKWARD', name: 'PDR.DIR');
+      return -1.0;
+    }
     log('→ FORWARD', name: 'PDR.DIR');
     return 1.0;
   }
