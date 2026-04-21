@@ -20,6 +20,7 @@ dependencies:
   sensors_plus: ^4.0.0      # Accelerometer for step counting
   flutter_compass: ^0.8.0   # Compass heading from magnetometer
   webview_flutter: ^4.4.0   # WebView for running MindAR image tracking
+  permission_handler: ^11.3.1  # Runtime location permission for compass fusion
 
 dev_dependencies:
   flutter_test:
@@ -29,7 +30,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - lib/mindar_tracker.html
+    - assets/mindar_tracker.html
 
 dependency_overrides:
   permission_handler: ^11.3.1

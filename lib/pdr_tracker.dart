@@ -22,10 +22,24 @@ class PDRTracker {
   Vector3 _currentPosition;
   double _heading = 0.0;
   double _initialHeading = 0.0;
+  bool _initialHeadingSet = false;
   double _mapHeadingRadians = 0.0;
   final double initialMapFacingRadians;
   int _totalSteps = 0;
   DateTime _lastStepTime = DateTime.now();
+  DateTime _lastCompassInvalidLog = DateTime.fromMillisecondsSinceEpoch(0);
+  int _invalidCompassCount = 0;
+
+  // ── Heading smoothing ──
+  // iOS reports heading accuracy in degrees; indoors we've seen 12°–40°.
+  // Raw readings jump 70°+ step-to-step, which turns every walking vector
+  // into noise. We gate on accuracy and average over a rolling window using
+  // a circular mean so 359° + 1° averages to 0°, not 180°.
+  static const double _maxHeadingAccuracyDegrees = 25.0;
+  static const int _headingSmoothWindow = 10;
+  static const int _headingMinSamplesForInit = 5;
+  final List<double> _headingBufferCos = [];
+  final List<double> _headingBufferSin = [];
 
   // ── Step state machine ──
   _StepPhase _phase = _StepPhase.idle;
@@ -92,6 +106,10 @@ class PDRTracker {
     _consecutiveValidSteps = 0;
     _isWalkingLocked = false;
     _recentStepIntervals.clear();
+    _initialHeadingSet = false;
+    _invalidCompassCount = 0;
+    _headingBufferCos.clear();
+    _headingBufferSin.clear();
 
     if (Platform.isAndroid || Platform.isIOS) {
       try {
@@ -284,19 +302,18 @@ class PDRTracker {
   // DIRECTION DETECTION
   // ═══════════════════════════════════════════════
   //
-  // FIX: The old code projected a gravity-free UserAccelerometerEvent onto a
-  // gravity unit vector from a separate accelerometerEventStream. This was
-  // mathematically wrong — projecting a gravity-free vector onto a gravity
-  // axis produces noise, not a meaningful forward component.
+  // We only distinguish forward from lateral (side-step). Backward detection
+  // via body-frame accelerometer is not reliable: the phone's orientation
+  // shifts with hand/arm position during walking, so the sign of net +Z
+  // acceleration is noise-dominated. Field logs showed ~20% of forward
+  // steps misclassified as BACKWARD, which flipped the walking vector and
+  // produced random-walk drift.
   //
-  // Correct approach: UserAccelerometerEvent already has gravity removed by
-  // the OS sensor fusion. For a phone held upright in-hand while walking:
-  //   • e.z  ≈ forward/backward (+z = forward, screen facing user)
-  //   • e.x  ≈ lateral (left/right)
-  //
-  // We average signed e.z over the cycle. Negative average → backward.
-  // If |lateral| >> |forward| → side-step (half step length).
-  // Default: FORWARD (overwhelmingly most common during navigation).
+  // Proper forward/backward distinction needs world-frame sensor fusion
+  // (raw accel for gravity + gyro integration + heading) which requires
+  // per-device calibration. Until that exists, forward-only is strictly
+  // more accurate: indoor nav is ~99% forward walking, and treating all
+  // locked steps as forward eliminates the sign-flip failure mode.
 
   double _computeDirection() {
     if (_forwardSampleCount == 0) {
@@ -307,15 +324,9 @@ class PDRTracker {
     final avgLat = _netLateralAccel / _forwardSampleCount;
     log('avgZ(fwd)=${avgFwd.toStringAsFixed(3)} avgX(lat)=${avgLat.toStringAsFixed(3)} samples=$_forwardSampleCount', name: 'PDR.DIR');
 
-    // Clear lateral dominance → side-step
     if (avgLat.abs() > avgFwd.abs() * 2.0) {
       log('→ LATERAL movement (half step)', name: 'PDR.DIR');
       return 0.5;
-    }
-    // Backward: needs stronger threshold (−0.5) to avoid noise misfires
-    if (avgFwd < -0.5) {
-      log('→ BACKWARD', name: 'PDR.DIR');
-      return -1.0;
     }
     log('→ FORWARD', name: 'PDR.DIR');
     return 1.0;
@@ -333,15 +344,58 @@ class PDRTracker {
   // ═══════════════════════════════════════════════
 
   void _onCompassData(CompassEvent event) {
-    if (event.heading == null) return;
-    final h = event.heading!;
-    if (_initialHeading == 0.0 && _totalSteps == 0) {
-      _initialHeading = h;
-      log('Initial heading set: ${h.toStringAsFixed(1)}°', name: 'PDR.COMPASS');
+    final h = event.heading;
+    final acc = event.accuracy;
+
+    // iOS returns heading = -1 when the magnetometer is uncalibrated or
+    // CoreLocation has no fix. Accuracy < 0 means unreliable on both platforms.
+    // We also reject readings with accuracy worse than the threshold; indoors
+    // those carry ±25°+ error which swings the walking vector step-to-step.
+    final invalid = h == null ||
+        h < 0 ||
+        (acc != null && (acc < 0 || acc > _maxHeadingAccuracyDegrees));
+    if (invalid) {
+      _invalidCompassCount++;
+      final now = DateTime.now();
+      if (now.difference(_lastCompassInvalidLog).inSeconds >= 3) {
+        log('Invalid reading (h=$h acc=$acc count=$_invalidCompassCount). '
+            'Phone compass likely uncalibrated or too noisy — move device in '
+            'a figure-8 away from metal/electronics and ensure location '
+            'permission is granted.', name: 'PDR.COMPASS');
+        _lastCompassInvalidLog = now;
+      }
+      return;
     }
-    _heading = h;
-    _mapHeadingRadians = initialMapFacingRadians + (h - _initialHeading) * math.pi / 180.0;
-    onHeadingUpdate?.call(h);
+
+    // Append to circular-mean buffer. Converting each heading to (cos, sin)
+    // then averaging handles the 0°/360° wrap correctly.
+    final rad = h * math.pi / 180.0;
+    _headingBufferCos.add(math.cos(rad));
+    _headingBufferSin.add(math.sin(rad));
+    if (_headingBufferCos.length > _headingSmoothWindow) {
+      _headingBufferCos.removeAt(0);
+      _headingBufferSin.removeAt(0);
+    }
+
+    final avgCos = _headingBufferCos.reduce((a, b) => a + b) / _headingBufferCos.length;
+    final avgSin = _headingBufferSin.reduce((a, b) => a + b) / _headingBufferSin.length;
+    final smoothed = (math.atan2(avgSin, avgCos) * 180.0 / math.pi + 360.0) % 360.0;
+
+    // Don't latch _initialHeading on the very first (noisy) sample; wait for
+    // enough samples so the reference is stable.
+    if (!_initialHeadingSet) {
+      if (_headingBufferCos.length < _headingMinSamplesForInit) return;
+      _initialHeading = smoothed;
+      _initialHeadingSet = true;
+      log('Initial heading set: ${smoothed.toStringAsFixed(1)}° '
+          '(accuracy=$acc, smoothed over $_headingMinSamplesForInit samples, '
+          'rejected $_invalidCompassCount invalid readings first)',
+          name: 'PDR.COMPASS');
+    }
+    _heading = smoothed;
+    _mapHeadingRadians = initialMapFacingRadians +
+        (smoothed - _initialHeading) * math.pi / 180.0;
+    onHeadingUpdate?.call(smoothed);
   }
 
   // ═══════════════════════════════════════════════
@@ -353,15 +407,26 @@ class PDRTracker {
     log('Walking state RESET', name: 'PDR');
   }
 
-  void snapToGraph(NavGraph graph) {
-    final nid = graph.findNearestNode(_currentPosition);
-    final nn = graph.nodes[nid]!;
-    final d = _currentPosition.distanceTo(nn.position);
-    if (d < 3.0) {
-      log('Snapped to "$nid" (was ${d.toStringAsFixed(2)}m away). $currentPosition → ${nn.position}', name: 'PDR.SNAP');
-      _currentPosition = nn.position;
+  // Snap to the nearest node in an explicit candidate list (typically the
+  // current and upcoming waypoints). Passed-waypoint and unrelated graph
+  // nodes must be filtered out by the caller — snapping to them drags the
+  // PDR backward along the route.
+  void snapToNodes(List<NavNode> candidates, {double maxDist = 3.0}) {
+    if (candidates.isEmpty) return;
+    NavNode nearest = candidates.first;
+    double best = _currentPosition.distanceTo(nearest.position);
+    for (int i = 1; i < candidates.length; i++) {
+      final d = _currentPosition.distanceTo(candidates[i].position);
+      if (d < best) { best = d; nearest = candidates[i]; }
+    }
+    if (best < maxDist) {
+      log('Snapped to "${nearest.id}" (was ${best.toStringAsFixed(2)}m away, '
+          '${candidates.length} path candidates). $_currentPosition → ${nearest.position}',
+          name: 'PDR.SNAP');
+      _currentPosition = nearest.position;
     } else {
-      log('Too far from nearest node "$nid" (${d.toStringAsFixed(2)}m). No snap.', name: 'PDR.SNAP');
+      log('Too far from nearest path node "${nearest.id}" (${best.toStringAsFixed(2)}m). No snap.',
+          name: 'PDR.SNAP');
     }
   }
 

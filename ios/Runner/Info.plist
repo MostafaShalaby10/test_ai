@@ -4,6 +4,12 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera for AR navigation and image marker tracking.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>This app uses motion sensors to count your steps for indoor navigation.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app uses your location to align the indoor navigation map.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

@@ -185,25 +185,45 @@ class NavGraph {
 // ═══════════════════════════════════════════════════════════════
 
 class CoordinateAligner {
+  // Yaw rotates a vector from map frame into AR frame around +Y:
+  //   ar.x = map.x*cos + map.z*sin
+  //   ar.z = -map.x*sin + map.z*cos
+  // then we translate by _offset. Previously these methods ignored yaw, so
+  // anything that wasn't facing exactly along map+X at session start ended up
+  // with the map rotated onto the wrong AR axes (e.g. a 3-m forward waypoint
+  // appeared 3 m to the user's right).
   Vector3? _offset;
   double _yawOffset = 0.0;
   bool get isAligned => _offset != null;
 
   void alignFromQRCode({required Vector3 knownMapPosition, required Vector3 arDetectedPosition, double? arCameraYaw, double? knownMapYaw}) {
-    _offset = arDetectedPosition - knownMapPosition;
-    if (arCameraYaw != null && knownMapYaw != null) _yawOffset = arCameraYaw - knownMapYaw;
+    _yawOffset = (arCameraYaw != null && knownMapYaw != null) ? arCameraYaw - knownMapYaw : 0.0;
+    final c = math.cos(_yawOffset), s = math.sin(_yawOffset);
+    final rotatedMapX = knownMapPosition.x * c + knownMapPosition.z * s;
+    final rotatedMapZ = -knownMapPosition.x * s + knownMapPosition.z * c;
+    _offset = Vector3(
+      arDetectedPosition.x - rotatedMapX,
+      arDetectedPosition.y - knownMapPosition.y,
+      arDetectedPosition.z - rotatedMapZ,
+    );
     log('Aligned! offset=$_offset yawOffset=${_yawOffset.toStringAsFixed(3)} rad', name: 'ALIGN');
     log('  mapPos=$knownMapPosition arPos=$arDetectedPosition', name: 'ALIGN');
   }
 
   Vector3? arToMap(Vector3 arPos) {
     if (_offset == null) { log('arToMap called but NOT aligned!', name: 'ALIGN'); return null; }
-    return arPos - _offset!;
+    final dx = arPos.x - _offset!.x;
+    final dz = arPos.z - _offset!.z;
+    final c = math.cos(-_yawOffset), s = math.sin(-_yawOffset);
+    return Vector3(dx * c + dz * s, arPos.y - _offset!.y, -dx * s + dz * c);
   }
 
   Vector3? mapToAR(Vector3 mapPos) {
     if (_offset == null) { log('mapToAR called but NOT aligned!', name: 'ALIGN'); return null; }
-    return mapPos + _offset!;
+    final c = math.cos(_yawOffset), s = math.sin(_yawOffset);
+    final rotX = mapPos.x * c + mapPos.z * s;
+    final rotZ = -mapPos.x * s + mapPos.z * c;
+    return Vector3(rotX + _offset!.x, mapPos.y + _offset!.y, rotZ + _offset!.z);
   }
 }
 

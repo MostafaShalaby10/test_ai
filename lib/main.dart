@@ -1,9 +1,15 @@
 import 'dart:developer';
+
 import 'package:flutter/material.dart';
-import 'device_capability_checker.dart';
+
 import 'ar_navigation_screen.dart';
-import 'sensor_ar_screen.dart';
+import 'device_capability_checker.dart';
 import 'map_2d_screen.dart';
+// Deferred so the Tier 2 Dart library (and its webview_flutter imports) isn't
+// initialized until a user actually picks Tier 2. Native plugin registration
+// on iOS still happens at app launch via GeneratedPluginRegistrant — that's a
+// Flutter platform constraint, not one we can defer from Dart.
+import 'sensor_ar_screen.dart' deferred as sensor_ar;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -196,7 +202,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ],
   );
 
-  void _start(BuildContext ctx) {
+  Future<void> _start(BuildContext ctx) async {
     log('Starting navigation with tier: $_active', name: 'MAIN');
     Widget screen;
     switch (_active) {
@@ -206,7 +212,11 @@ class _HomeScreenState extends State<HomeScreen> {
         break;
       case NavigationTier.sensorAR:
         log('Launching Tier 2: Sensor AR + MindAR', name: 'MAIN');
-        screen = SensorARScreen(
+        log('Loading deferred Tier 2 library...', name: 'MAIN');
+        await sensor_ar.loadLibrary();
+        log('Tier 2 library loaded', name: 'MAIN');
+        if (!ctx.mounted) return;
+        screen = sensor_ar.SensorARScreen(
           mallJson: _mallData,
           startNodeId: 'door',
           initialFacingRadians: 0.0,
@@ -395,20 +405,20 @@ class _HomeScreenState extends State<HomeScreen> {
       {
         "nodes": [
           {"id": "door", "x": 0, "y": 0, "z": 0, "shopName": null},
-          {"id": "middle", "x": -4.56, "y": 0, "z": -4.07, "shopName": null},
-          {"id": "room3", "x": 0, "y": 0, "z": 2, "shopName": "Room3"},
-          {"id": "end", "x": 0, "y": 0, "z": 5, "shopName": "End"},
-          {"id": "kitchen", "x": 2, "y": 0, "z": 5, "shopName": "Kitchen"},
-          {"id": "bathroom", "x": 3, "y": 0, "z": 5, "shopName": "Bathroom"},
-          {"id": "n6", "x": -5.1, "y": 0, "z": -2.53, "shopName": null},
-          {"id": "n7", "x": 2.79, "y": 0, "z": -4.89, "shopName": null},
-          {"id": "n8", "x": 0.61, "y": 0, "z": -3.17, "shopName": null},
+          {"id": "window", "x": 3, "y": 0, "z": 0, "shopName": "Window"},
+          {
+            "id": "bookshelf",
+            "x": 3,
+            "y": 0,
+            "z": -1.5,
+            "shopName": "Bookshelf",
+          },
+          {"id": "tv", "x": 1, "y": 0, "z": -1.5, "shopName": "TV"},
         ],
         "edges": [
-          {"from": "door", "to": "room3"},
-          {"from": "end", "to": "bathroom"},
-          {"from": "room3", "to": "end"},
-          {"from": "bathroom", "to": "kitchen"},
+          {"from": "door", "to": "window"},
+          {"from": "window", "to": "bookshelf"},
+          {"from": "bookshelf", "to": "tv"},
         ],
       };
 }

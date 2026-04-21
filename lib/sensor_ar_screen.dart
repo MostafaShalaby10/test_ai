@@ -2,6 +2,7 @@ import 'dart:math'as math;
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'ar_navigation_system.dart';
 import 'pdr_tracker.dart';
 import 'mindar_detector.dart';
@@ -62,6 +63,21 @@ class _SensorARScreenState extends State<SensorARScreen> {
     _pdr.onDebugUpdate = (d) { /* PDR internal debug available if needed */ };
 
     _initCam();
+    _requestLocationThenStartPdr();
+  }
+
+  // iOS CoreLocation will emit heading = -1 until the user grants
+  // locationWhenInUse. The compass stream is started by _pdr.start(), so we
+  // request permission first; if the user denies, we still start PDR (it
+  // degrades gracefully to a constant heading with our invalid-reading filter).
+  Future<void> _requestLocationThenStartPdr() async {
+    try {
+      final status = await Permission.locationWhenInUse.request();
+      log('Location permission: $status', name: 'SENSOR');
+    } catch (e) {
+      log('Location permission request error: $e', name: 'SENSOR');
+    }
+    if (!mounted) return;
     _pdr.start();
   }
 
@@ -101,7 +117,11 @@ class _SensorARScreenState extends State<SensorARScreen> {
 
     if (_steps % 5 == 0 && _steps > 0) {
       log('Snap check at step $_steps', name: 'SENSOR');
-      _pdr.snapToGraph(_graph);
+      // Only consider nodes ahead on the path plus the one just passed
+      // (edge-case backtrack). Passed waypoints would drag us back along
+      // the route; unrelated graph nodes could pull us off entirely.
+      final start = _wpIdx > 0 ? _wpIdx - 1 : 0;
+      _pdr.snapToNodes(_path!.sublist(start));
     }
 
     if (_wpIdx < _path!.length) {
@@ -114,6 +134,11 @@ class _SensorARScreenState extends State<SensorARScreen> {
         _wpIdx++;
         if (_wpIdx >= _path!.length) {
           log('★ ARRIVED at destination "$_shop"!', name: 'SENSOR.NAV');
+          // Anchor PDR exactly at the destination node so the next navigation
+          // starts from a known clean position, and clear the walking-lock so
+          // stray steps while the arrival dialog is visible don't drift us off.
+          _pdr.correctPosition(target.position);
+          _pdr.resetWalkingState();
           setState(() { _arrived = true; _isNav = false; });
           return;
         }
