@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "mall": {
+    "id": "mall_001",
+    "name": "Example Mall",
+    "coordinateSystem": {
+      "units": "meters",
+      "angleConvention": "ccw_from_positive_x_degrees",
+      "angleRange": "[0, 360)"
+    }
+  },
+  "shops": [
+    {
+      "id": "zara",
+      "name": "ZARA",
+      "doorstep": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "facingAngle": 0,
+      "sign": {
+        "widthMeters": 0.7,
+        "heightMeters": 0.5,
+        "heightAboveDoorMeters": 2.2
+      },
+      "featureFile": "features/zara.bin",
+      "featureCount": 80
+    }
+  ],
+  "navigationGraph": {
+    "nodes": [
+      {
+        "id": "zara",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "shopId": "zara"
+      },
+      {
+        "id": "n_window",
+        "x": 3,
+        "y": 0,
+        "z": 0,
+        "shopId": "window"
+      }
+    ],
+    "edges": [
+      {
+        "from": "zara",
+        "to": "n_window",
+        "weight": 3.0
+      }
+    ]
+  }
+}

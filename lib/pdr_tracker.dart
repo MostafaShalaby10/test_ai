@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:math'as math;
 import 'dart:developer';
 import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'ar_navigation_system.dart';
+import 'mall_geometry.dart' as geom;
 
 enum _StepPhase { idle, rising, falling, valley }
 
@@ -29,6 +31,12 @@ class PDRTracker {
   DateTime _lastStepTime = DateTime.now();
   DateTime _lastCompassInvalidLog = DateTime.fromMillisecondsSinceEpoch(0);
   int _invalidCompassCount = 0;
+
+  // ── Drift tracking ──
+  // Reset on every visual / manual fix. UI uses these to de-emphasize
+  // the position pin and prompt for a rescan after thresholds are passed.
+  int _stepsSinceLastFix = 0;
+  DateTime? _lastFixAt;
 
   // ── Heading smoothing ──
   // iOS reports heading accuracy in degrees; indoors we've seen 12°–40°.
@@ -93,6 +101,8 @@ class PDRTracker {
   double get initialHeading => _initialHeading;
   int get totalSteps => _totalSteps;
   bool get isWalkingDetected => _isWalkingLocked;
+  int get stepsSinceLastFix => _stepsSinceLastFix;
+  DateTime? get lastFixAt => _lastFixAt;
 
   // ═══════════════════════════════════════════════
   // START / STOP
@@ -282,6 +292,7 @@ class PDRTracker {
 
     // ── Count and move ──
     _totalSteps++;
+    _stepsSinceLastFix++;
     final dir = _computeDirection();
     final oldPos = _currentPosition;
     _currentPosition = _computeNewPosition(dir);
@@ -334,9 +345,9 @@ class PDRTracker {
 
   Vector3 _computeNewPosition(double dirMul) {
     final eff = stepLength * dirMul;
-    final dx = eff * math.cos(_mapHeadingRadians);
-    final dz = eff * math.sin(_mapHeadingRadians);
-    return Vector3(_currentPosition.x + dx, _currentPosition.y, _currentPosition.z + dz);
+    // Route through the single-source-of-truth step helper so any future
+    // change to the step-displacement convention happens in one file.
+    return geom.pdrStep(_currentPosition, geom.radToDeg(_mapHeadingRadians), eff);
   }
 
   // ═══════════════════════════════════════════════
@@ -379,7 +390,7 @@ class PDRTracker {
 
     final avgCos = _headingBufferCos.reduce((a, b) => a + b) / _headingBufferCos.length;
     final avgSin = _headingBufferSin.reduce((a, b) => a + b) / _headingBufferSin.length;
-    final smoothed = (math.atan2(avgSin, avgCos) * 180.0 / math.pi + 360.0) % 360.0;
+    final smoothed = geom.normalizeAngle(math.atan2(avgSin, avgCos) * 180.0 / math.pi);
 
     // Don't latch _initialHeading on the very first (noisy) sample; wait for
     // enough samples so the reference is stable.
@@ -433,7 +444,46 @@ class PDRTracker {
   void correctPosition(Vector3 known) {
     final old = _currentPosition;
     _currentPosition = known;
+    _stepsSinceLastFix = 0;
+    _lastFixAt = DateTime.now();
     log('Position CORRECTED: $old → $known (delta=${old.distanceTo(known).toStringAsFixed(2)}m)', name: 'PDR.CORRECT');
     onPositionUpdate?.call(_currentPosition);
+  }
+
+  // Visual fix that supplies BOTH position and heading. Adjusts the
+  // initial-heading reference so the current compass reading maps to
+  // the supplied mall heading — i.e. treats vision as ground truth on
+  // disagreement (per the plan's risks section: trust vision over
+  // magnetometer indoors).
+  //
+  // mallHeadingDeg is in mall-degrees (CCW from +X, [0,360)). The PDR's
+  // internal _mapHeadingRadians is offset from initialMapFacingRadians,
+  // so we solve for the new _initialHeading such that
+  //   (_heading - newInitial) * π/180 + initialMapFacingRadians
+  //     == mallHeadingDeg * π/180
+  @visibleForTesting
+  void setInitialHeadingForTest(double compassDeg) {
+    _heading = compassDeg;
+    _initialHeading = compassDeg;
+    _initialHeadingSet = true;
+  }
+
+  void correctPositionAndHeading(Vector3 known, double mallHeadingDeg) {
+    correctPosition(known);
+    if (!_initialHeadingSet) {
+      log('correctPositionAndHeading called before compass latched — '
+          'will only correct position', name: 'PDR.CORRECT');
+      return;
+    }
+    final initialMapFacingDeg = initialMapFacingRadians * 180.0 / math.pi;
+    _initialHeading = _heading - (mallHeadingDeg - initialMapFacingDeg);
+    // Keep _mapHeadingRadians consistent so the next step uses the new ref.
+    _mapHeadingRadians = initialMapFacingRadians +
+        (_heading - _initialHeading) * math.pi / 180.0;
+    log('Heading CORRECTED: now mapped to ${mallHeadingDeg.toStringAsFixed(1)}° '
+        'mall (compass=${_heading.toStringAsFixed(1)}°, '
+        'newInitialRef=${_initialHeading.toStringAsFixed(1)}°)',
+        name: 'PDR.CORRECT');
+    onHeadingUpdate?.call(_heading);
   }
 }

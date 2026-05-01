@@ -1,11 +1,14 @@
 import 'dart:developer';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import 'ar_navigation_screen.dart';
+import 'debug_screen.dart';
 import 'device_capability_checker.dart';
+import 'mall_data.dart';
 import 'map_2d_screen.dart';
-// Deferred so the Tier 2 Dart library (and its webview_flutter imports) isn't
+// Deferred so the Tier 2 library (camera, opencv_dart, isolate) isn't
 // initialized until a user actually picks Tier 2. Native plugin registration
 // on iOS still happens at app launch via GeneratedPluginRegistrant — that's a
 // Flutter platform constraint, not one we can defer from Dart.
@@ -38,10 +41,16 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _detecting = true;
   NavigationTier? _override;
 
+  // Loaded once from assets/mall/shops.json. The app refuses to start the
+  // navigation tiers until this resolves; if it errors, we surface the
+  // exception so the user knows the asset bundle is broken.
+  Future<MallData>? _mallFuture;
+
   @override
   void initState() {
     super.initState();
     _detect();
+    _mallFuture = MallData.loadFromAssets();
   }
 
   Future<void> _detect() async {
@@ -52,19 +61,55 @@ class _HomeScreenState extends State<HomeScreen> {
       'Detected tier: $tier (${DeviceCapabilityChecker.tierDescription(tier)})',
       name: 'MAIN',
     );
-    if (mounted)
+    if (mounted) {
       setState(() {
         _detected = tier;
         _detecting = false;
       });
+    }
   }
 
   NavigationTier get _active => _override ?? _detected ?? NavigationTier.map2D;
 
+  void _openDebug(MallData mall) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DebugScreen(mall: mall, startNodeId: _firstNodeId(mall)),
+      ),
+    );
+  }
+
+  String _firstNodeId(MallData mall) =>
+      mall.navigationGraph.nodes.containsKey('door')
+          ? 'door'
+          : mall.navigationGraph.nodes.keys.first;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('AR Mall Navigator'), centerTitle: true),
+      appBar: AppBar(
+        // Long-press the title (debug builds only) to open the visual-
+        // localization debug screen. Phase 0.4.
+        title: GestureDetector(
+          onLongPress: kDebugMode
+              ? () async {
+                  try {
+                    final mall = await _mallFuture!;
+                    if (mounted) _openDebug(mall);
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Mall data error: $e')),
+                      );
+                    }
+                  }
+                }
+              : null,
+          child: const Text('AR Mall Navigator'),
+        ),
+        centerTitle: true,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -204,29 +249,45 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _start(BuildContext ctx) async {
     log('Starting navigation with tier: $_active', name: 'MAIN');
+    final MallData mall;
+    try {
+      mall = await _mallFuture!;
+    } catch (e) {
+      log('Failed to load mall data: $e', name: 'MAIN');
+      if (ctx.mounted) {
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          SnackBar(
+            content: Text('Cannot load mall data: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+    if (!ctx.mounted) return;
+
+    final startId = _firstNodeId(mall);
     Widget screen;
     switch (_active) {
       case NavigationTier.fullAR:
         log('Launching Tier 1: Full AR', name: 'MAIN');
-        screen = ARNavigationScreen(mallJson: _mallData, startNodeId: 'door');
+        screen = ARNavigationScreen(mall: mall, startNodeId: startId);
         break;
       case NavigationTier.sensorAR:
-        log('Launching Tier 2: Sensor AR + MindAR', name: 'MAIN');
+        log('Launching Tier 2: Sensor AR', name: 'MAIN');
         log('Loading deferred Tier 2 library...', name: 'MAIN');
         await sensor_ar.loadLibrary();
         log('Tier 2 library loaded', name: 'MAIN');
         if (!ctx.mounted) return;
         screen = sensor_ar.SensorARScreen(
-          mallJson: _mallData,
-          startNodeId: 'door',
+          mall: mall,
+          startNodeId: startId,
           initialFacingRadians: 0.0,
-          mindFileUrl: 'https://cdn.jsdelivr.net/gh/user/repo/targets.mind',
-          imageMarkers: _imageMarkers,
         );
         break;
       case NavigationTier.map2D:
         log('Launching Tier 3: 2D Map', name: 'MAIN');
-        screen = Map2DScreen(mallJson: _mallData, startNodeId: 'door');
+        screen = Map2DScreen(mall: mall, startNodeId: startId);
         break;
     }
     Navigator.push(ctx, MaterialPageRoute(builder: (_) => screen));
@@ -265,160 +326,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ── DATA ──
-
-  static final List<Map<String, dynamic>> _imageMarkers = [
-    {
-      "targetIndex": 0,
-      "name": "Door Poster",
-      "x": 0,
-      "y": 0,
-      "z": 0,
-      "facingRadians": 0.0,
-      "nearestNodeId": "door",
-    },
-    {
-      "targetIndex": 1,
-      "name": "Desk Sign",
-      "x": 4,
-      "y": 0,
-      "z": 0,
-      "facingRadians": 3.1416,
-      "nearestNodeId": "desk",
-    },
-    {
-      "targetIndex": 2,
-      "name": "Bed Poster",
-      "x": 2,
-      "y": 0,
-      "z": 3,
-      "facingRadians": 4.7124,
-      "nearestNodeId": "bed",
-    },
-  ];
-
-  static final Map<String, dynamic> _mallData =
-      // {
-      //   "nodes": [
-      //     {"id": "n0", "x": 0, "y": 0, "z": -0.13, "label": "corner"},
-      //     {"id": "n1", "x": 9.38, "y": 0, "z": -0.88, "label": "hook"},
-      //     {"id": "n2", "x": 22.5, "y": 0, "z": 0, "label": "end-right"},
-      //     {"id": "n3", "x": 0, "y": 0, "z": 9.38, "label": "mid-left"},
-      //     {"id": "n4", "x": 0, "y": 0, "z": 18.13, "label": "bottom-left"},
-      //     {"id": "n5", "x": 21.25, "y": 0, "z": 29.38, "label": "oval (detached)"},
-      //   ],
-      //   "edges": [
-      //     {"from": "n0", "to": "n1"},
-      //     {"from": "n1", "to": "n2"},
-      //     {"from": "n0", "to": "n3"},
-      //     {"from": "n3", "to": "n4"},
-      //     {"from": "n2", "to": "n5"},
-      //   ],
-      // };
-      //  {
-      //   "nodes": [
-      //     {
-      //       "id": "door",
-      //       "x": 0,
-      //       "y": 0,
-      //       "z":  -0.13,
-      //       "shopName": null
-      //     },
-      //     {
-      //       "id": "middle",
-      //       "x": 9.38,
-      //       "y": 0,
-      //       "z": -0.88,
-      //       "shopName": null
-      //     },
-      //     {
-      //       "id": "room3",
-      //       "x":  22.5,
-      //       "y": 0,
-      //       "z": 0,
-      //       "shopName": "Room3"
-      //     },
-      //     {
-      //       "id": "end",
-      //       "x": 0,
-      //       "y": 0,
-      //       "z": 9.38,
-      //       "shopName": "End"
-      //     },
-      //     {
-      //       "id": "kitchen",
-      //       "x": 0,
-      //       "y": 0,
-      //       "z": 18.13,
-      //       "shopName": "Kitchen"
-      //     },
-      //     {
-      //       "id": "bathroom",
-      //       "x":21.25,
-      //       "y": 0,
-      //       "z":29.38,
-      //       "shopName": "Bathroom"
-      //     },
-      //     {
-      //       "id": "n6",
-      //       "x": -0.64,
-      //       "y": 0,
-      //       "z": 2.01,
-      //       "shopName": null
-      //     }
-      //   ],
-      //   "edges": [
-      //     {
-      //       "from": "door",
-      //       "to": "middle"
-      //     },
-      //     {
-      //       "from": "door",
-      //       "to": "room3"
-      //     },
-      //     {
-      //       "from": "middle",
-      //       "to": "room3"
-      //     },
-      //     {
-      //       "from": "middle",
-      //       "to": "end"
-      //     },
-      //     {
-      //       "from": "room3",
-      //       "to": "bathroom"
-      //     },
-      //     {
-      //       "from": "room3",
-      //       "to": "end"
-      //     },
-      //     {
-      //       "from": "end",
-      //       "to": "bathroom"
-      //     },
-      //     {
-      //       "from": "bathroom",
-      //       "to": "kitchen"
-      //     }
-      //   ]
-      // };
-      {
-        "nodes": [
-          {"id": "door", "x": 0, "y": 0, "z": 0, "shopName": null},
-          {"id": "window", "x": 3, "y": 0, "z": 0, "shopName": "Window"},
-          {
-            "id": "bookshelf",
-            "x": 3,
-            "y": 0,
-            "z": -1.5,
-            "shopName": "Bookshelf",
-          },
-          {"id": "tv", "x": 1, "y": 0, "z": -1.5, "shopName": "TV"},
-        ],
-        "edges": [
-          {"from": "door", "to": "window"},
-          {"from": "window", "to": "bookshelf"},
-          {"from": "bookshelf", "to": "tv"},
-        ],
-      };
+  // Mall data now comes from assets/mall/shops.json via MallData.loadFromAssets.
+  // The surveyor (sign_surveyor) is the source of truth; run scripts/
+  // sync_mall_assets.sh to refresh the asset bundle.
 }

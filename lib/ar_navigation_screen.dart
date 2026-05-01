@@ -9,11 +9,12 @@ import 'package:ar_flutter_plugin_2/managers/ar_anchor_manager.dart';
 import 'package:ar_flutter_plugin_2/managers/ar_location_manager.dart';
 import 'package:vector_math/vector_math_64.dart' as vm;
 import 'ar_navigation_system.dart';
+import 'mall_data.dart';
 
 class ARNavigationScreen extends StatefulWidget {
-  final Map<String, dynamic> mallJson;
+  final MallData mall;
   final String startNodeId;
-  const ARNavigationScreen({super.key, required this.mallJson, required this.startNodeId});
+  const ARNavigationScreen({super.key, required this.mall, required this.startNodeId});
   @override
   State<ARNavigationScreen> createState() => _ARNavigationScreenState();
 }
@@ -21,7 +22,7 @@ class ARNavigationScreen extends StatefulWidget {
 class _ARNavigationScreenState extends State<ARNavigationScreen> {
   late ARSessionManager arSessionManager;
   late ARObjectManager arObjectManager;
-  late NavigationSession _session;
+  late final NavigationSession _session;
 
   bool _isARReady = false;
   bool _isNavigating = false;
@@ -36,9 +37,8 @@ class _ARNavigationScreenState extends State<ARNavigationScreen> {
   @override
   void initState() {
     super.initState();
-    log('initState: mallJson nodes=${(widget.mallJson["nodes"] as List).length} startNode=${widget.startNodeId}', name: 'AR');
-    final graph = NavGraph.fromJson(widget.mallJson);
-    _session = NavigationSession(graph: graph);
+    log('initState: nodes=${widget.mall.navigationGraph.nodes.length} startNode=${widget.startNodeId}', name: 'AR');
+    _session = NavigationSession(graph: widget.mall.navigationGraph);
     _session.avatar.onAvatarMoved = _onAvatarMoved;
     _session.avatar.onArrived = _onArrived;
     _session.avatar.onDistanceUpdate = _onDistanceUpdate;

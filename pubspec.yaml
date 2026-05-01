@@ -15,22 +15,39 @@ dependencies:
   ar_flutter_plugin_2: ^0.0.3
   vector_math: ^2.1.4
 
-  # ── Tier 2: Sensor AR + MindAR (Camera + PDR + Image Tracking) ──
-  camera: ^0.10.5+9         # Raw camera feed (no AR)
+  # ── Tier 2: Sensor AR + Visual Localization (Camera + PDR + ORB) ──
+  camera: ^0.10.5+9         # Raw camera feed + scan-on-tap shutter
   sensors_plus: ^4.0.0      # Accelerometer for step counting
   flutter_compass: ^0.8.0   # Compass heading from magnetometer
-  webview_flutter: ^4.4.0   # WebView for running MindAR image tracking
   permission_handler: ^11.3.1  # Runtime location permission for compass fusion
+
+  # ── Visual Localization (ORB + solvePnP via opencv_dart) ──
+  opencv_dart: 2.2.1+4      # Pinned: package is WIP, APIs may shift between versions
+  path_provider: ^2.1.0     # For ground-truth log file path
+  fuzzy: ^0.5.1             # Fuzzy shop name search
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^2.0.0
 
+hooks:
+  user_defines:
+    dartcv4:
+      include_modules:
+        - calib3d      # solvePnP, findHomography
+        - features2d   # ORB, BFMatcher
+        - imgproc      # color conversion, Laplacian
+        - imgcodecs    # JPEG decode
+
 flutter:
   uses-material-design: true
   assets:
-    - assets/mindar_tracker.html
+    - assets/mall/shops.json
+    - assets/mall/features/
+    # Optional per-shop reference images for the in-app self-test (debug).
+    # Naming convention: assets/mall/test_images/<shop_id>.jpg
+    #- assets/mall/test_images/
 
 dependency_overrides:
   permission_handler: ^11.3.1
