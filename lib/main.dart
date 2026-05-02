@@ -72,18 +72,17 @@ class _HomeScreenState extends State<HomeScreen> {
   NavigationTier get _active => _override ?? _detected ?? NavigationTier.map2D;
 
   void _openDebug(MallData mall) {
+    // Debug screen still needs a node to anchor its visualizations.
+    final fallback = mall.navigationGraph.nodes.containsKey('door')
+        ? 'door'
+        : mall.navigationGraph.nodes.keys.first;
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => DebugScreen(mall: mall, startNodeId: _firstNodeId(mall)),
+        builder: (_) => DebugScreen(mall: mall, startNodeId: fallback),
       ),
     );
   }
-
-  String _firstNodeId(MallData mall) =>
-      mall.navigationGraph.nodes.containsKey('door')
-          ? 'door'
-          : mall.navigationGraph.nodes.keys.first;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildTierOverride(),
             const SizedBox(height: 24),
             const Text(
-              'Stand at the door, then tap Start',
+              'Tap Start, then pick destination and where you are',
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
             const SizedBox(height: 16),
@@ -266,12 +265,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (!ctx.mounted) return;
 
-    final startId = _firstNodeId(mall);
     Widget screen;
     switch (_active) {
       case NavigationTier.fullAR:
         log('Launching Tier 1: Full AR', name: 'MAIN');
-        screen = ARNavigationScreen(mall: mall, startNodeId: startId);
+        screen = ARNavigationScreen(mall: mall);
         break;
       case NavigationTier.sensorAR:
         log('Launching Tier 2: Sensor AR', name: 'MAIN');
@@ -279,15 +277,11 @@ class _HomeScreenState extends State<HomeScreen> {
         await sensor_ar.loadLibrary();
         log('Tier 2 library loaded', name: 'MAIN');
         if (!ctx.mounted) return;
-        screen = sensor_ar.SensorARScreen(
-          mall: mall,
-          startNodeId: startId,
-          initialFacingRadians: 0.0,
-        );
+        screen = sensor_ar.SensorARScreen(mall: mall);
         break;
       case NavigationTier.map2D:
         log('Launching Tier 3: 2D Map', name: 'MAIN');
-        screen = Map2DScreen(mall: mall, startNodeId: startId);
+        screen = Map2DScreen(mall: mall);
         break;
     }
     Navigator.push(ctx, MaterialPageRoute(builder: (_) => screen));

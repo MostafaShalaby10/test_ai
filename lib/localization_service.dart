@@ -41,8 +41,8 @@ const int _orbNLevels = 8;
 const int _orbEdgeThreshold = 15;
 const int _keepTopK = 100;
 const double _loweRatio = 0.75;
-const int _minGoodMatches = 15;
-const int _minInliers = 10;
+const int _minGoodMatches = 10;
+const int _minInliers = 7;
 const double _ransacReprojThreshold = 3.0;
 const double _blurLaplacianThreshold = 80.0;
 
@@ -406,11 +406,13 @@ class LocalizationService {
             inliers: inliers, matches: goodMatches.length);
       }
 
-      // Heading: in sign frame, camera looks along -row[2] of R (the
-      // sign→camera rotation). Project onto sign +X / +Z plane and
-      // rotate into mall frame via the same theta as signFrameToMallFrame.
-      final fwdSignX = -r[2][0];
-      final fwdSignZ = -r[2][2];
+      // Heading: OpenCV camera forward is +Z (into scene). The camera-forward
+      // direction expressed in sign frame is R^T · (0,0,1) = row 3 of R.
+      // (Negating these gives the BACKWARD direction — exactly the bug that
+      // made every visual heading 180° off, telling the user to walk straight
+      // when they actually needed to turn around.)
+      final fwdSignX = r[2][0];
+      final fwdSignZ = r[2][2];
       final theta = geom.degToRad(shopData.facingAngle - 90.0);
       final cTheta = math.cos(theta);
       final sTheta = math.sin(theta);

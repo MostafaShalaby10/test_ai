@@ -63,16 +63,23 @@ double radToDeg(double rad) => normalizeAngle(rad * 180.0 / math.pi);
 /// transform it into the mall's global frame.
 ///
 /// Steps:
-///   1. Shift down by the sign's height-above-door so the reference
-///      point becomes the doorstep instead of the sign center.
+///   1. Shift the sign-center origin down to the floor so Y becomes
+///      height-above-floor (sign center sits at heightAboveDoor +
+///      signHeight/2 above the doorstep floor).
 ///   2. Rotate around +Y by the shop's facingAngle so the sign's
 ///      out-of-face axis points into the corridor in mall coordinates.
 ///   3. Translate to the shop's doorstep.
 Vector3 signFrameToMallFrame(Vector3 posInSign, Shop shop) {
-  // 1. Shift sign-center → doorstep.
+  // 1. Shift sign-center → floor. The sign center is
+  // heightAboveDoor + signHeight/2 above the doorstep floor, so a camera
+  // at the sign-frame origin lands at that height in floor-referenced
+  // mall Y. A camera held below the sign center (negative sign-frame Y)
+  // therefore lands at a smaller floor height — exactly what we want.
+  final signCenterAboveFloor =
+      shop.sign.heightAboveDoorMeters + shop.sign.heightMeters / 2;
   final shifted = Vector3(
     posInSign.x,
-    posInSign.y - shop.sign.heightAboveDoorMeters,
+    posInSign.y + signCenterAboveFloor,
     posInSign.z,
   );
 

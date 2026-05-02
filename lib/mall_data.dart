@@ -125,10 +125,35 @@ class MallData {
       shops[shop.id] = shop;
     }
 
+    // Map-only destinations: graph nodes whose shopId has no matching real
+    // shop (e.g. `n_window` → "window"). Synthesize a featureFile-less Shop
+    // so they show up in the destination picker but stay out of the
+    // scannable-starting-shop picker (which filters by featureFile != null).
+    final rawNav = j['navigationGraph'] as Map<String, dynamic>;
+    for (final n in rawNav['nodes'] as List) {
+      final m = n as Map;
+      final shopId = m['shopId'] as String?;
+      if (shopId == null || shops.containsKey(shopId)) continue;
+      shops[shopId] = Shop(
+        id: shopId,
+        name: shopId,
+        doorstep: Vector3(
+          (m['x'] as num).toDouble(),
+          (m['y'] as num).toDouble(),
+          (m['z'] as num).toDouble(),
+        ),
+        facingAngle: 0,
+        sign: const SignDims(
+          widthMeters: 0,
+          heightMeters: 0,
+          heightAboveDoorMeters: 0,
+        ),
+      );
+    }
+
     // Bridge shopId → shopName for the existing NavGraph.fromJson, which
     // reads shopName off each node. shopId is the new schema; shopName is
     // what the legacy NavNode/MapPainter consume.
-    final rawNav = j['navigationGraph'] as Map<String, dynamic>;
     final navJson = <String, dynamic>{
       'nodes': (rawNav['nodes'] as List).map((n) {
         final m = Map<String, dynamic>.from(n as Map);

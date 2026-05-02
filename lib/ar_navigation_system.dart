@@ -14,6 +14,16 @@ class Vector3 {
     return math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
+  /// Floor-plane (xz) distance. Use this for any user↔node comparison: the
+  /// user's mall y reflects camera-floor height (~1.5–1.7m), while graph
+  /// nodes sit at y=0, so 3D distance always overestimates by ~1.5m and
+  /// makes arrival thresholds unreachable. Node↔node distances should
+  /// stay 3D (via distanceTo) for multi-floor support.
+  double distanceToXZ(Vector3 o) {
+    final dx = x - o.x, dz = z - o.z;
+    return math.sqrt(dx * dx + dz * dz);
+  }
+
   Vector3 operator -(Vector3 o) => Vector3(x - o.x, y - o.y, z - o.z);
   Vector3 operator +(Vector3 o) => Vector3(x + o.x, y + o.y, z + o.z);
 
@@ -172,7 +182,7 @@ class NavGraph {
     String nearest = nodes.keys.first;
     double nearestDist = double.infinity;
     for (final node in nodes.values) {
-      final d = pos.distanceTo(node.position);
+      final d = pos.distanceToXZ(node.position);
       if (d < nearestDist) { nearestDist = d; nearest = node.id; }
     }
     log('Nearest node to $pos → "$nearest" (${nearestDist.toStringAsFixed(2)}m)', name: 'NAV');
@@ -269,7 +279,7 @@ class AvatarGuide {
     if (_currentWaypointIndex >= _path.length) { state = NavigationState.arrived; onArrived?.call(); return; }
 
     final target = _path[_currentWaypointIndex];
-    final dist = userPos.distanceTo(target.position);
+    final dist = userPos.distanceToXZ(target.position);
     final totalRemaining = _calcRemaining(userPos);
     onDistanceUpdate?.call(dist, totalRemaining);
 
@@ -290,7 +300,7 @@ class AvatarGuide {
 
   double _calcRemaining(Vector3 userPos) {
     if (_currentWaypointIndex >= _path.length) return 0;
-    double r = userPos.distanceTo(_path[_currentWaypointIndex].position);
+    double r = userPos.distanceToXZ(_path[_currentWaypointIndex].position);
     for (int i = _currentWaypointIndex; i < _path.length - 1; i++) r += _path[i].position.distanceTo(_path[i + 1].position);
     return r;
   }

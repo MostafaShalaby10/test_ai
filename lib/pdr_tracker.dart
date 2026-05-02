@@ -49,6 +49,11 @@ class PDRTracker {
   final List<double> _headingBufferCos = [];
   final List<double> _headingBufferSin = [];
 
+  // Mall heading supplied by a visual fix that arrived BEFORE the compass
+  // latched. Applied as the anchor at latch time so vision still wins over
+  // an arbitrary compass-reading-at-latch reference. Cleared once consumed.
+  double? _pendingMallHeadingDeg;
+
   // ── Step state machine ──
   _StepPhase _phase = _StepPhase.idle;
   DateTime _cycleStartTime = DateTime.now();
@@ -120,6 +125,7 @@ class PDRTracker {
     _invalidCompassCount = 0;
     _headingBufferCos.clear();
     _headingBufferSin.clear();
+    _pendingMallHeadingDeg = null;
 
     if (Platform.isAndroid || Platform.isIOS) {
       try {
@@ -396,12 +402,28 @@ class PDRTracker {
     // enough samples so the reference is stable.
     if (!_initialHeadingSet) {
       if (_headingBufferCos.length < _headingMinSamplesForInit) return;
-      _initialHeading = smoothed;
+      // If a visual fix landed before we latched, anchor _initialHeading so
+      // the latched compass reading maps to the supplied mall heading. Same
+      // math as correctPositionAndHeading; we just defer it to here.
+      final pending = _pendingMallHeadingDeg;
+      if (pending != null) {
+        final initialMapFacingDeg = initialMapFacingRadians * 180.0 / math.pi;
+        _initialHeading = smoothed - (pending - initialMapFacingDeg);
+        _pendingMallHeadingDeg = null;
+        log('Initial heading set with pending visual anchor: '
+            'compass=${smoothed.toStringAsFixed(1)}° → '
+            'mallHeading=${pending.toStringAsFixed(1)}° '
+            '(initialRef=${_initialHeading.toStringAsFixed(1)}°, accuracy=$acc, '
+            'rejected $_invalidCompassCount invalid readings first)',
+            name: 'PDR.COMPASS');
+      } else {
+        _initialHeading = smoothed;
+        log('Initial heading set: ${smoothed.toStringAsFixed(1)}° '
+            '(accuracy=$acc, smoothed over $_headingMinSamplesForInit samples, '
+            'rejected $_invalidCompassCount invalid readings first)',
+            name: 'PDR.COMPASS');
+      }
       _initialHeadingSet = true;
-      log('Initial heading set: ${smoothed.toStringAsFixed(1)}° '
-          '(accuracy=$acc, smoothed over $_headingMinSamplesForInit samples, '
-          'rejected $_invalidCompassCount invalid readings first)',
-          name: 'PDR.COMPASS');
     }
     _heading = smoothed;
     _mapHeadingRadians = initialMapFacingRadians +
@@ -425,9 +447,9 @@ class PDRTracker {
   void snapToNodes(List<NavNode> candidates, {double maxDist = 3.0}) {
     if (candidates.isEmpty) return;
     NavNode nearest = candidates.first;
-    double best = _currentPosition.distanceTo(nearest.position);
+    double best = _currentPosition.distanceToXZ(nearest.position);
     for (int i = 1; i < candidates.length; i++) {
-      final d = _currentPosition.distanceTo(candidates[i].position);
+      final d = _currentPosition.distanceToXZ(candidates[i].position);
       if (d < best) { best = d; nearest = candidates[i]; }
     }
     if (best < maxDist) {
@@ -471,8 +493,10 @@ class PDRTracker {
   void correctPositionAndHeading(Vector3 known, double mallHeadingDeg) {
     correctPosition(known);
     if (!_initialHeadingSet) {
+      _pendingMallHeadingDeg = mallHeadingDeg;
       log('correctPositionAndHeading called before compass latched — '
-          'will only correct position', name: 'PDR.CORRECT');
+          'buffered mallHeading=${mallHeadingDeg.toStringAsFixed(1)}° '
+          'to anchor at latch time', name: 'PDR.CORRECT');
       return;
     }
     final initialMapFacingDeg = initialMapFacingRadians * 180.0 / math.pi;

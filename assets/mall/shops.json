@@ -26,6 +26,23 @@
       },
       "featureFile": "features/zara.bin",
       "featureCount": 80
+    },
+    {
+      "id": "window",
+      "name": "window",
+      "doorstep": {
+        "x": 3,
+        "y": 0,
+        "z": 0
+      },
+      "facingAngle": 180,
+      "sign": {
+        "widthMeters": 0.7,
+        "heightMeters": 0.5,
+        "heightAboveDoorMeters": 2.2
+      },
+      "featureFile": null,
+      "featureCount": null
     }
   ],
   "navigationGraph": {
@@ -38,7 +55,7 @@
         "shopId": "zara"
       },
       {
-        "id": "n_window",
+        "id": "window",
         "x": 3,
         "y": 0,
         "z": 0,
@@ -48,7 +65,7 @@
     "edges": [
       {
         "from": "zara",
-        "to": "n_window",
+        "to": "window",
         "weight": 3.0
       }
     ]

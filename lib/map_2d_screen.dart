@@ -6,10 +6,16 @@ import 'package:flutter/material.dart';
 import 'ar_navigation_system.dart';
 import 'mall_data.dart';
 
+enum _Map2DPhase {
+  pickingDestination,
+  pickingStartingShop,
+  navigating,
+  arrived,
+}
+
 class Map2DScreen extends StatefulWidget {
   final MallData mall;
-  final String startNodeId;
-  const Map2DScreen({super.key, required this.mall, required this.startNodeId});
+  const Map2DScreen({super.key, required this.mall});
   @override
   State<Map2DScreen> createState() => _Map2DScreenState();
 }
@@ -19,16 +25,19 @@ class _Map2DScreenState extends State<Map2DScreen>
   late final NavGraph _graph;
   List<NavNode>? _path;
   int _wpIdx = 0;
-  bool _isNav = false;
-  bool _arrived = false;
   String _shop = '';
+
+  _Map2DPhase _phase = _Map2DPhase.pickingDestination;
+  NavNode? _destinationNode;
+  Shop? _startingShop;
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
 
   @override
   void initState() {
     super.initState();
-    log('initState: start=${widget.startNodeId}', name: 'MAP2D');
+    log('initState', name: 'MAP2D');
     _graph = widget.mall.navigationGraph;
     _pulseCtrl = AnimationController(
       vsync: this,
@@ -46,9 +55,28 @@ class _Map2DScreenState extends State<Map2DScreen>
     super.dispose();
   }
 
+  // Same filter as the Sensor AR tier — only shops with surveyed feature
+  // files are scannable. We keep the same picker UX even though the 2D map
+  // doesn't actually run a scan, so the user experience is consistent.
+  List<Shop> _scannableShops() => widget.mall.shops.values
+      .where((s) => s.featureFile != null)
+      .toList();
+
   void _onDest(NavNode shop) {
     log('Destination: "${shop.shopName}" (${shop.id})', name: 'MAP2D');
-    final path = _graph.findPath(widget.startNodeId, shop.id);
+    setState(() {
+      _destinationNode = shop;
+      _phase = _Map2DPhase.pickingStartingShop;
+    });
+  }
+
+  void _onStartingShop(Shop shop) {
+    log('Starting shop: "${shop.name}"', name: 'MAP2D');
+    final dest = _destinationNode;
+    if (dest == null) return;
+
+    final startNodeId = _graph.findNearestNode(shop.doorstep);
+    final path = _graph.findPath(startNodeId, dest.id);
     if (path == null) {
       log('No path!', name: 'MAP2D');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -63,9 +91,9 @@ class _Map2DScreenState extends State<Map2DScreen>
     setState(() {
       _path = path;
       _wpIdx = 0;
-      _isNav = true;
-      _shop = shop.shopName ?? shop.id;
-      _arrived = false;
+      _startingShop = shop;
+      _shop = dest.shopName ?? dest.id;
+      _phase = _Map2DPhase.navigating;
     });
   }
 
@@ -74,10 +102,18 @@ class _Map2DScreenState extends State<Map2DScreen>
     setState(() {
       _wpIdx++;
       if (_wpIdx >= _path!.length - 1) {
-        _arrived = true;
-        _isNav = false;
+        _phase = _Map2DPhase.arrived;
         log('★ ARRIVED', name: 'MAP2D');
       }
+    });
+  }
+
+  void _resetForNewNavigation() {
+    setState(() {
+      _phase = _Map2DPhase.pickingDestination;
+      _path = null;
+      _destinationNode = null;
+      _startingShop = null;
     });
   }
 
@@ -113,18 +149,17 @@ class _Map2DScreenState extends State<Map2DScreen>
 
   @override
   Widget build(BuildContext context) {
+    final isNav = _phase == _Map2DPhase.navigating;
+    final isArrived = _phase == _Map2DPhase.arrived;
     return Scaffold(
       appBar: AppBar(
         title: const Text('2D Map Navigation'),
         backgroundColor: Colors.orange,
         foregroundColor: Colors.white,
         actions: [
-          if (_isNav)
+          if (isNav)
             TextButton(
-              onPressed: () => setState(() {
-                _isNav = false;
-                _path = null;
-              }),
+              onPressed: _resetForNewNavigation,
               child: const Text(
                 'Cancel',
                 style: TextStyle(color: Colors.white),
@@ -154,22 +189,26 @@ class _Map2DScreenState extends State<Map2DScreen>
                   path: _path,
                   currentWaypointIndex: _wpIdx,
                   userDotRadius: _pulseAnim.value,
+                  userPosition: isNav ? _startingShop?.doorstep : null,
                 ),
                 size: Size.infinite,
               ),
             ),
           ),
-          if (!_isNav && !_arrived) _buildPicker(),
-          if (_isNav) _buildDirs(),
-          if (_arrived) _buildArrival(),
+          if (_phase == _Map2DPhase.pickingDestination) _buildDestPicker(),
+          if (_phase == _Map2DPhase.pickingStartingShop) _buildStartingShopPicker(),
+          if (isNav) _buildDirs(),
+          if (isArrived) _buildArrival(),
         ],
       ),
     );
   }
 
-  Widget _buildPicker() {
-    final shops = _graph.nodes.values
-        .where((n) => n.shopName != null && n.id != widget.startNodeId)
+  // Phase 1 — pick destination (any shop bridged via shopName, even those
+  // without feature files like `n_window`).
+  Widget _buildDestPicker() {
+    final destinations = _graph.nodes.values
+        .where((n) => n.shopName != null)
         .toList();
     return Container(
       padding: const EdgeInsets.all(16),
@@ -177,11 +216,9 @@ class _Map2DScreenState extends State<Map2DScreen>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'You are at: ${widget.startNodeId}',
-            style: TextStyle(color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 8),
+          const Text('Step 1 of 2',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 4),
           const Text(
             'Where do you want to go?',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -190,7 +227,7 @@ class _Map2DScreenState extends State<Map2DScreen>
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: shops
+            children: destinations
                 .map(
                   (s) => ElevatedButton.icon(
                     icon: const Icon(Icons.store),
@@ -202,6 +239,67 @@ class _Map2DScreenState extends State<Map2DScreen>
                   ),
                 )
                 .toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Phase 2 — pick the shop the user is standing at (only those with
+  // feature files; same filter as Tier 2). The shop's doorstep becomes
+  // the rendered start position for the route.
+  Widget _buildStartingShopPicker() {
+    final scannable = _scannableShops();
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Step 2 of 2',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const SizedBox(height: 4),
+          Text('Going to ${_destinationNode?.shopName ?? ''}',
+              style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+          const SizedBox(height: 8),
+          const Text(
+            'Which shop are you standing at?',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          if (scannable.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                'No surveyed shops found. Run sign_surveyor and '
+                'scripts/sync_mall_assets.sh.',
+                style: TextStyle(fontSize: 13, color: Colors.red[700]),
+              ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: scannable
+                  .map(
+                    (s) => ElevatedButton.icon(
+                      icon: const Icon(Icons.store),
+                      label: Text(s.name),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange,
+                      ),
+                      onPressed: () => _onStartingShop(s),
+                    ),
+                  )
+                  .toList(),
+            ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () => setState(() {
+              _phase = _Map2DPhase.pickingDestination;
+              _destinationNode = null;
+            }),
+            child: const Text('← Change destination'),
           ),
         ],
       ),
@@ -294,10 +392,7 @@ class _Map2DScreenState extends State<Map2DScreen>
         Text(_shop, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
         const SizedBox(height: 16),
         ElevatedButton(
-          onPressed: () => setState(() {
-            _arrived = false;
-            _path = null;
-          }),
+          onPressed: _resetForNewNavigation,
           child: const Text('Navigate Somewhere Else'),
         ),
       ],

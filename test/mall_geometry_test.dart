@@ -163,29 +163,34 @@ void main() {
       ),
     );
 
-    test('user directly in front of sign is placed at doorstep height −2', () {
-      // Sign-frame origin (0,0,0) → shifted down by heightAboveDoor=2:
-      // (0,−2,0) → rotated by (90−90)=0°: (0,−2,0) → translated by (5,0,0): (5,−2,0)
+    // Sign center sits at heightAboveDoor + signHeight/2 = 2.0 + 0.25 = 2.25
+    // above the doorstep floor, so a camera at the sign-frame origin lands at
+    // mall Y = 2.25.
+    const signCenterAboveFloor = 2.25;
+
+    test('user at sign-frame origin lands at sign-center height', () {
+      // (0,0,0) → shift +signCenterAboveFloor: (0, 2.25, 0)
+      // → rotate by (90−90)=0°: (0, 2.25, 0) → translate (5,0,0): (5, 2.25, 0)
       final result = signFrameToMallFrame(const Vector3(0, 0, 0), shop90);
       expect(result.x, closeTo(5.0, 1e-9));
-      expect(result.y, closeTo(-2.0, 1e-9));
+      expect(result.y, closeTo(signCenterAboveFloor, 1e-9));
       expect(result.z, closeTo(0.0, 1e-9));
     });
 
     test('user 3m in front of sign (sign +Z) maps into corridor', () {
       // Sign +Z points into the corridor; with facingAngle=90° that is mall +Z.
-      // (0,0,3) → shift: (0,−2,3) → rotate 0°: same → translate (5,0,0): (5,−2,3)
+      // (0,0,3) → shift: (0, 2.25, 3) → rotate 0°: same → translate (5,0,0).
       final result = signFrameToMallFrame(const Vector3(0, 0, 3), shop90);
       expect(result.x, closeTo(5.0, 1e-9));
-      expect(result.y, closeTo(-2.0, 1e-9));
+      expect(result.y, closeTo(signCenterAboveFloor, 1e-9));
       expect(result.z, closeTo(3.0, 1e-9));
     });
 
     test('shop facing 0° rotates sign +Z onto mall +X corridor', () {
       // facingAngle=0°, theta = degToRad(0−90) = −π/2, c=0, s=−1
       // User at (0,0,3) in sign frame:
-      // shift: (0,−2,3) → rotate: rotX=0*0−3*(−1)=3, rotZ=0*(−1)+3*0=0 → (3,−2,0)
-      // translate by (0,0,0): (3,−2,0)
+      // shift: (0, 2.25, 3) → rotate: rotX=0*0−3*(−1)=3, rotZ=0*(−1)+3*0=0
+      // → (3, 2.25, 0) → translate by (0,0,0): (3, 2.25, 0)
       const shop0 = Shop(
         id: 's',
         name: 'S',
@@ -199,7 +204,7 @@ void main() {
       );
       final result = signFrameToMallFrame(const Vector3(0, 0, 3), shop0);
       expect(result.x, closeTo(3.0, 1e-9));
-      expect(result.y, closeTo(-2.0, 1e-9));
+      expect(result.y, closeTo(signCenterAboveFloor, 1e-9));
       expect(result.z, closeTo(0.0, 1e-9));
     });
   });

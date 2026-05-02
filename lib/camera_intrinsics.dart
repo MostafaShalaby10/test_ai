@@ -128,3 +128,36 @@ class CameraIntrinsicsChannel {
   /// For debug UI. Clears the in-memory cache so a re-fetch hits native.
   static void clearCache() => _cache.clear();
 }
+
+/// Live ARKit / ARCore-derived intrinsics for the AR snapshot used by
+/// Tier 1's scan-on-tap visual fix. Reads the AR session's projection matrix
+/// for the active view and converts it to pinhole intrinsics in snapshot
+/// pixel space — captures FOV, aspect cropping, and device orientation
+/// correctly. iOS uses ARKit's `currentFrame.camera.projectionMatrix`;
+/// Android uses ARCore's `Camera.getProjectionMatrix` via reflection on
+/// sceneview's `ARSceneView`. Returns null on desktop / when no AR view is
+/// active / on platforms with no implementation.
+class ARIntrinsicsChannel {
+  static const MethodChannel _channel = MethodChannel('mall_nav/ar_intrinsics');
+
+  static Future<CameraIntrinsics?> fetchSnapshotIntrinsics() async {
+    if (!(Platform.isIOS || Platform.isAndroid)) return null;
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>(
+        'getARSnapshotIntrinsics',
+      );
+      if (res == null) return null;
+      return CameraIntrinsics(
+        fx: (res['fx'] as num).toDouble(),
+        fy: (res['fy'] as num).toDouble(),
+        cx: (res['cx'] as num).toDouble(),
+        cy: (res['cy'] as num).toDouble(),
+        width: (res['width'] as num).toInt(),
+        height: (res['height'] as num).toInt(),
+      );
+    } catch (e) {
+      log('AR snapshot intrinsics fetch failed ($e)', name: 'INTRINSICS');
+      return null;
+    }
+  }
+}
